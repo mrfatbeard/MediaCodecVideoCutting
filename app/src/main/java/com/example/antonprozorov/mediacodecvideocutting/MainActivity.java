@@ -37,8 +37,8 @@ public class MainActivity extends AppCompatActivity {
         String src = Environment.getExternalStorageDirectory().getAbsolutePath() + "/video.mp4";
         String dest = Environment.getExternalStorageDirectory().getAbsolutePath() + "/cut.mp4";
         new File(dest).delete();
-        long from = 1000;
-        long to = 3000;
+        long from = 15000;
+        long to = 25000;
 
         MediaCodecHelper mch = new MediaCodecHelper();
         executor.execute(new CutRunnable(mch, src, dest, from, to));
@@ -62,7 +62,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void run() {
             try {
-                mch.cutVideo(src, dest, from, to);
+                mch.cutVideo(getApplicationContext(), src, dest, from, to);
                 runOnUiThread(() -> message.setText("Done"));
             } catch (IOException e) {
                 e.printStackTrace();
