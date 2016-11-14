@@ -102,6 +102,8 @@ public abstract class AbstractFileGrabber implements IFileGrabber {
             try {
                 TaskResult result = (TaskResult) msg.obj;
                 switch (msg.what) {
+                    case MESSAGE_STARTED:
+                        result.task.listener.onStarted(result.task.id);
                     case MESSAGE_PROGRESS:
                         result.task.listener.onProgressUpdate(result.task.getPercents());
                         break;

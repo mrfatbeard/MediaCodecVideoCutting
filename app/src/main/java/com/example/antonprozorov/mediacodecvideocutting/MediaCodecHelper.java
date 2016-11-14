@@ -8,13 +8,18 @@ import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
 import android.net.Uri;
+import android.support.annotation.NonNull;
 import android.util.Log;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
+
+import rx.Observer;
+import rx.functions.Action1;
 
 @SuppressLint("UseSparseArrays")
 public class MediaCodecHelper {
@@ -35,6 +40,11 @@ public class MediaCodecHelper {
     private volatile int preparedEncoderCount = 0;
     private volatile int doneCount = 0;
     private volatile long start;
+    private final Action1<Void> callback;
+
+    public MediaCodecHelper(Action1<Void> callback) {
+        this.callback = callback;
+    }
 
     private static void _log(String message) {
         if (VERBOSE) {
@@ -42,7 +52,7 @@ public class MediaCodecHelper {
         }
     }
 
-    public void cutVideo(Context context, String src, String dest, long fromMsecs, long toMsecs) throws IOException {
+    public void cutVideo(@NonNull Context context, @NonNull Uri src, @NonNull String dest, long fromMsecs, long toMsecs) throws IOException {
         Log.e(TAG, "Start");
         start = System.currentTimeMillis();
 
@@ -50,25 +60,17 @@ public class MediaCodecHelper {
         checkOutputFile(dest);
         checkTimeParams(fromMsecs, toMsecs);
 
-        final String srcClone = src + ".audio";
-        LocalFileGrabber lfg = new LocalFileGrabber.Builder(context)
-                .setUri(Uri.fromFile(new File(src)))
-                .setDestination(srcClone)
-                .build();
-//        lfg.run();
-
         fromUs = fromMsecs * 1000;
         toUs = toMsecs * 1000;
 
         muxer = new MediaMuxer(dest, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
 
         final MediaExtractor extractor = new MediaExtractor();
-        extractor.setDataSource(src);
+        extractor.setDataSource(context, src, null);
         int videoTrack = findVideoTrack(extractor);
 
         final MediaExtractor cloneExtractor = new MediaExtractor();
-//        cloneExtractor.setDataSource(srcClone);
-        cloneExtractor.setDataSource(src);
+        cloneExtractor.setDataSource(context, src, null);
         int audioTrack = findAudioTrack(extractor);
 
         if (videoTrack >= 0) {
@@ -352,6 +354,7 @@ public class MediaCodecHelper {
         if (doneCount == encoders.size()) {
             Log.e(TAG, "End");
             Log.e(TAG, "Took " + (System.currentTimeMillis() - start) + " msecs");
+            callback.call(null);
             extractor.release();
             muxer.release();
         }
@@ -413,19 +416,17 @@ public class MediaCodecHelper {
         if (format.containsKey(MediaFormat.KEY_BIT_RATE)) {
             bitRate = format.getInteger(MediaFormat.KEY_BIT_RATE);
         }
-        int iFrameInterval = I_FRAME_INTERVAL;
 
         String outMime = MIME_H264;
         MediaFormat outFormat = MediaFormat.createVideoFormat(outMime, width, height);
         outFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar);
         outFormat.setInteger(MediaFormat.KEY_FRAME_RATE, frameRate);
         outFormat.setInteger(MediaFormat.KEY_BIT_RATE, bitRate);
-        outFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, iFrameInterval);
+        outFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, I_FRAME_INTERVAL);
         outFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 0);
 
         MediaCodec encoder = MediaCodec.createEncoderByType(outMime);
         encoder.configure(outFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-//        encoder.start();
         encoders.put(trackNumber, encoder);
     }
 
@@ -439,9 +440,9 @@ public class MediaCodecHelper {
         Assertion.check(() -> to > from);
     }
 
-    private void checkInputFile(String src) {
+    private void checkInputFile(Uri src) {
         Assertion.check(() -> src != null);
-        File input = new File(src);
+        File input = new File(URI.create(String.valueOf(src)));
         Assertion.check(() -> input.exists() && input.canRead());
     }
 }
