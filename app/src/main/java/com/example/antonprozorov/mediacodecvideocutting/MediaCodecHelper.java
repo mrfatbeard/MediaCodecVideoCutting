@@ -322,6 +322,7 @@ public class MediaCodecHelper {
                                     decodedData.position(encoderBufferInfo.offset);
                                     decodedData.limit(encoderBufferInfo.size);
                                     encoderInputBuf.clear();
+                                    encoderInputBuf.limit(encoderBufferInfo.size);
                                     encoderInputBuf.put(decodedData);
                                     encoder.queueInputBuffer(encoderInputStatus, 0, encoderInputBuf.position(), encoderBufferInfo.presentationTimeUs, encoderBufferInfo.flags);
                                 } else {
@@ -383,13 +384,13 @@ public class MediaCodecHelper {
         return false;
     }
 
-    private void initDecoder(MediaFormat format, String mime, int trackNumber) throws IOException {
+    private void initDecoder(@NonNull MediaFormat format, @NonNull String mime, int trackNumber) throws IOException {
         MediaCodec decoder = MediaCodec.createDecoderByType(mime);
         decoder.configure(format, null, null, 0);
         decoders.put(trackNumber, decoder);
     }
 
-    private void initAudioEncoder(MediaFormat format, int trackNumber) throws IOException {
+    private void initAudioEncoder(@NonNull MediaFormat format, int trackNumber) throws IOException {
         int sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE);
         int channelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
         int bitRate = 320 * 1024;
@@ -397,22 +398,28 @@ public class MediaCodecHelper {
             bitRate = format.getInteger(MediaFormat.KEY_BIT_RATE);
         }
 
+        int aacProfile = 2;
+        if (format.containsKey(MediaFormat.KEY_AAC_PROFILE)) {
+            aacProfile = format.getInteger(MediaFormat.KEY_AAC_PROFILE);
+        }
+
         String outMime = MIME_AAC;
         MediaFormat outFormat = MediaFormat.createAudioFormat(outMime, sampleRate, channelCount);
         outFormat.setInteger(MediaFormat.KEY_BIT_RATE, bitRate);
-        outFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 0);
+        outFormat.setInteger(MediaFormat.KEY_AAC_PROFILE, aacProfile);
+        outFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_SAMPLE_SIZE);
 
         MediaCodec encoder = MediaCodec.createEncoderByType(outMime);
         encoder.configure(outFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
         encoders.put(trackNumber, encoder);
     }
 
-    private void initVideoEncoder(MediaFormat format, int trackNumber) throws IOException {
+    private void initVideoEncoder(@NonNull MediaFormat format, int trackNumber) throws IOException {
         int width = format.getInteger(MediaFormat.KEY_WIDTH);
         int height = format.getInteger(MediaFormat.KEY_HEIGHT);
         int frameRate = format.getInteger(MediaFormat.KEY_FRAME_RATE);
         FRAME_RATE = frameRate;
-        int bitRate = 11 * 1024 * 1024;
+        int bitRate = 3 * 1024 * 1024;
         if (format.containsKey(MediaFormat.KEY_BIT_RATE)) {
             bitRate = format.getInteger(MediaFormat.KEY_BIT_RATE);
         }
