@@ -1,4 +1,4 @@
-package com.example.antonprozorov.mediacodecvideocutting;
+package com.github.mrfatbeard.mediacodecvideocutting;
 
 import org.junit.Test;
 

@@ -1,4 +1,4 @@
-package com.example.antonprozorov.mediacodecvideocutting;
+package com.github.mrfatbeard.mediacodecvideocutting;
 
 import android.Manifest;
 import android.content.Intent;
@@ -12,6 +12,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.example.antonprozorov.mediacodecvideocutting.R;
 import com.jakewharton.rxbinding.view.RxView;
 import com.jakewharton.rxbinding.widget.RxSeekBar;
 import com.jakewharton.rxbinding.widget.RxTextView;
@@ -19,12 +20,10 @@ import com.tbruyelle.rxpermissions.RxPermissions;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.URI;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import fr.enoent.videokit.Videokit;
-import rx.Subscriber;
 import rx.subjects.BehaviorSubject;
 
 public class MainActivity extends AppCompatActivity {
@@ -116,7 +115,22 @@ public class MainActivity extends AppCompatActivity {
 
         long start = System.currentTimeMillis();
         progressBar.setVisibility(View.VISIBLE);
-        MediaCodecHelper mch = new MediaCodecHelper(v -> cuttingDone("MediaCodec", start));
+        MediaCodecHelper mch = new MediaCodecHelper(new Callback() {
+            @Override
+            public void onStarted() {
+
+            }
+
+            @Override
+            public void onError() {
+
+            }
+
+            @Override
+            public void onCompleted(String dest) {
+                cuttingDone("MediaCodec", start);
+            }
+        });
         executor.execute(new CutRunnable(mch, filename, mc, from, to));
     }
 

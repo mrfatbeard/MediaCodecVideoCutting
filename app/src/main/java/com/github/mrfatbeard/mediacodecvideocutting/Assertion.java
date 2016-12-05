@@ -1,4 +1,4 @@
-package com.example.antonprozorov.mediacodecvideocutting;
+package com.github.mrfatbeard.mediacodecvideocutting;
 
 public class Assertion {
     public static void check(Condition condition) {

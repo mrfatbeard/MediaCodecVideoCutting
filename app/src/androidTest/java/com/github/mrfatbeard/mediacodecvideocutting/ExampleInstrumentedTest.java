@@ -1,4 +1,4 @@
-package com.example.antonprozorov.mediacodecvideocutting;
+package com.github.mrfatbeard.mediacodecvideocutting;
 
 import android.content.Context;
 import android.support.test.InstrumentationRegistry;

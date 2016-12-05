@@ -1,4 +1,4 @@
-package com.example.antonprozorov.mediacodecvideocutting;
+package com.github.mrfatbeard.mediacodecvideocutting;
 
 public interface IFileGrabber extends Runnable {
     void setProgressListener(IProgressListener listener);

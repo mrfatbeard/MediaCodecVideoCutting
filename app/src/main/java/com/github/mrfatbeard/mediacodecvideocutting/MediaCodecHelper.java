@@ -1,6 +1,7 @@
-package com.example.antonprozorov.mediacodecvideocutting;
+package com.github.mrfatbeard.mediacodecvideocutting;
 
 import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.content.Context;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
@@ -8,6 +9,7 @@ import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
 import android.net.Uri;
+import android.os.Build;
 import android.support.annotation.NonNull;
 import android.util.Log;
 
@@ -17,45 +19,50 @@ import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
-
-import rx.Observer;
-import rx.functions.Action1;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @SuppressLint("UseSparseArrays")
-public class MediaCodecHelper {
+@TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR2)
+class MediaCodecHelper implements Thread.UncaughtExceptionHandler {
 
     private static final int I_FRAME_INTERVAL = 5;
     private static final String TAG = MediaCodecHelper.class.getName();
     private static final int MAX_SAMPLE_SIZE = 256 * 1024;
-    private static final boolean VERBOSE = /*false;/*/BuildConfig.DEBUG;
+    private static final boolean VERBOSE = BuildConfig.DEBUG;
     private static final String MIME_AAC = "audio/mp4a-latm";
     private static final String MIME_H264 = "video/avc";
-    private static int FRAME_RATE = 30;
     private final Map<Integer, MediaCodec> encoders = new HashMap<>();
     private final Map<Integer, MediaCodec> decoders = new HashMap<>();
+    private final Callback callback;
+    private final Object lock = new Object();
     private volatile MediaMuxer muxer;
     private volatile long fromUs;
     private volatile long toUs;
     private volatile boolean muxerStarted;
     private volatile int preparedEncoderCount = 0;
     private volatile int doneCount = 0;
+    private String dest;
     private volatile long start;
-    private final Action1<Void> callback;
+    private ExecutorService executorService;
+    private CountDownLatch PROCESSING_START;
 
-    public MediaCodecHelper(Action1<Void> callback) {
+    MediaCodecHelper(Callback callback) {
         this.callback = callback;
     }
 
     private static void _log(String message) {
         if (VERBOSE) {
-            Log.d(TAG, message);
+            Log.d(TAG, Thread.currentThread().getName() + ": " + message);
         }
     }
 
-    public void cutVideo(@NonNull Context context, @NonNull Uri src, @NonNull String dest, long fromMsecs, long toMsecs) throws IOException {
+    void cutVideo(@NonNull Context context, @NonNull Uri src, @NonNull String dest, long fromMsecs, long toMsecs) throws IOException {
         Log.e(TAG, "Start");
+        this.dest = dest;
+        callback.onStarted();
         start = System.currentTimeMillis();
-
         checkInputFile(src);
         checkOutputFile(dest);
         checkTimeParams(fromMsecs, toMsecs);
@@ -67,82 +74,65 @@ public class MediaCodecHelper {
 
         final MediaExtractor extractor = new MediaExtractor();
         extractor.setDataSource(context, src, null);
-        int videoTrack = findVideoTrack(extractor);
 
-        final MediaExtractor cloneExtractor = new MediaExtractor();
-        cloneExtractor.setDataSource(context, src, null);
-        int audioTrack = findAudioTrack(extractor);
+        final int trackCount = extractor.getTrackCount();
+        final int processingCount = getProcessingCount(extractor, trackCount);
 
-        if (videoTrack >= 0) {
-            extractor.selectTrack(videoTrack);
-            new Thread(() -> {
-                try {
-                    maybeProcessTrack(extractor, videoTrack);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            }).start();
-        }
+        PROCESSING_START = new CountDownLatch(processingCount);
+        this.executorService = Executors.newFixedThreadPool(processingCount, runnable -> {
+            Thread thread = new Thread(runnable);
+            thread.setUncaughtExceptionHandler(MediaCodecHelper.this);
+            return thread;
+        });
 
-        if (audioTrack >= 0) {
-            cloneExtractor.selectTrack(audioTrack);
-            new Thread(() -> {
-                try {
-                    maybeProcessTrack(cloneExtractor, audioTrack);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            }).start();
-        }
-
-//        maybeProcessTrack(extractor, extractor.getTrackFormat(1), 1);
-//        for (int trackNumber = 0; trackNumber < trackCount; trackNumber++) {
-//            int finalTrackNumber = trackNumber;
-//            extractor.selectTrack(trackNumber);
-//            final MediaFormat format = extractor.getTrackFormat(trackNumber);
-//            new Thread(() -> {
-//                try {
-//                    maybeProcessTrack(extractor, format, finalTrackNumber);
-//                } catch (IOException e) {
-//                    throw new RuntimeException(e);
-//                }
-//            }).start();
-//        }
-
-//        muxer.release();
-//        extractor.release();
-    }
-
-    private int findAudioTrack(MediaExtractor extractor) {
-        return findTrack(extractor, "audio/");
-    }
-
-    private int findVideoTrack(MediaExtractor extractor) {
-        return findTrack(extractor, "video/");
-    }
-
-    private int findTrack(MediaExtractor extractor, String s) {
-        for (int i = 0; i < extractor.getTrackCount(); i++) {
+        for (int i = 0; i < trackCount; i++) {
             MediaFormat format = extractor.getTrackFormat(i);
-            String mime = Optional.ofNullable(format.getString(MediaFormat.KEY_MIME)).orElse("");
-            if (mime.contains(s)) {
-                return i;
+            final String mime = format.getString(MediaFormat.KEY_MIME);
+            if (mime.contains("video") || mime.contains("audio")) {
+                final int trackNumber = i;
+                MediaExtractor ex = new MediaExtractor();
+                ex.setDataSource(context, src, null);
+                ex.selectTrack(i);
+                executorService.execute(() -> {
+                    try {
+                        maybeProcessTrack(ex, trackNumber);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
             }
         }
-        return -1;
+        extractor.release();
+    }
+
+    private int getProcessingCount(MediaExtractor extractor, int trackCount) {
+        int tracksForProcessing = 0;
+        for (int i = 0; i < trackCount; i++) {
+            MediaFormat format = extractor.getTrackFormat(i);
+            final String mime = format.getString(MediaFormat.KEY_MIME);
+            if (mime.contains("video") || mime.contains("audio")) {
+                tracksForProcessing++;
+            }
+        }
+        return tracksForProcessing;
     }
 
     private void maybeProcessTrack(MediaExtractor extractor, int trackNumber) throws IOException {
-        synchronized (encoders) {
-            boolean codecAvailable = maybeInitCodecs(extractor, trackNumber);
-
-            if (!codecAvailable) {
-                return;
+        try {
+            synchronized (lock) {
+                boolean codecAvailable = maybeInitCodecs(extractor, trackNumber);
+                PROCESSING_START.countDown();
+                if (!codecAvailable) {
+                    return;
+                }
             }
+            Log.d(TAG, "processing track " + trackNumber);
+            PROCESSING_START.await();
+            cutTrack(extractor, trackNumber);
+            Log.d(TAG, "track " + trackNumber + " done");
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
-        Log.d(TAG, "processing track " + trackNumber);
-        cutTrack(extractor, trackNumber);
-        Log.d(TAG, "track " + trackNumber + " done");
     }
 
     private void cutTrack(MediaExtractor extractor, int trackNumber) {
@@ -163,12 +153,11 @@ public class MediaCodecHelper {
         boolean outputDone = false;
         boolean decoderDone = false;
 
-        int bufferSize = MAX_SAMPLE_SIZE;
         int frameCount = 0;
         int offset = 100;
         int muxerTrackIndex = -1;
 
-        ByteBuffer extractedBuffer = ByteBuffer.allocate(bufferSize);
+        ByteBuffer extractedBuffer = ByteBuffer.allocate(MAX_SAMPLE_SIZE);
         MediaCodec.BufferInfo extractorBufferInfo = new MediaCodec.BufferInfo();
         MediaCodec.BufferInfo encoderBufferInfo = new MediaCodec.BufferInfo();
         extractor.seekTo(fromUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
@@ -240,6 +229,7 @@ public class MediaCodecHelper {
                     preparedEncoderCount++;
 
                     if (preparedEncoderCount == encoders.size()) {
+                        _log("output format: starting muxer with " + encoders.size() + " encoders");
                         muxer.start();
                         muxerStarted = true;
                     } else {
@@ -355,9 +345,9 @@ public class MediaCodecHelper {
         if (doneCount == encoders.size()) {
             Log.e(TAG, "End");
             Log.e(TAG, "Took " + (System.currentTimeMillis() - start) + " msecs");
-            callback.call(null);
             extractor.release();
             muxer.release();
+            callback.onCompleted(dest);
         }
     }
 
@@ -418,7 +408,6 @@ public class MediaCodecHelper {
         int width = format.getInteger(MediaFormat.KEY_WIDTH);
         int height = format.getInteger(MediaFormat.KEY_HEIGHT);
         int frameRate = format.getInteger(MediaFormat.KEY_FRAME_RATE);
-        FRAME_RATE = frameRate;
         int bitRate = 3 * 1024 * 1024;
         if (format.containsKey(MediaFormat.KEY_BIT_RATE)) {
             bitRate = format.getInteger(MediaFormat.KEY_BIT_RATE);
@@ -451,5 +440,12 @@ public class MediaCodecHelper {
         Assertion.check(() -> src != null);
         File input = new File(URI.create(String.valueOf(src)));
         Assertion.check(() -> input.exists() && input.canRead());
+    }
+
+    @Override
+    public void uncaughtException(Thread thread, Throwable throwable) {
+        Log.e(TAG, "Exception in worker thread: " + throwable.getMessage());
+        Optional.ofNullable(callback)
+                .ifPresent(Callback::onError);
     }
 }
